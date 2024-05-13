@@ -6,8 +6,10 @@
  *
  */
 
+#include <AzCore/Settings/SettingsRegistry.h>
 #include <AzCore/std/containers/vector.h>
 #include <AzFramework/Application/Application.h>
+#include <AzFramework/Asset/AssetSystemBus.h>
 #include <AzFramework/Windowing/NativeWindow.h>
 #include <AzFramework/XcbConnectionManager.h>
 #include <AzFramework/XcbInterface.h>
@@ -58,12 +60,11 @@ namespace AzFramework
         m_xcbRootScreen = xcb_setup_roots_iterator(xcbSetup).data;
         xcb_window_t xcbParentWindow = m_xcbRootScreen->root;
 
-        //
-        foreground = xcb_generate_id(m_xcbConnection);
-        uint32_t mask2 = XCB_GC_FOREGROUND | XCB_GC_GRAPHICS_EXPOSURES;
-        uint32_t values[2] = { m_xcbRootScreen->black_pixel, 0 };
+        m_xcbGraphicContext = xcb_generate_id(m_xcbConnection);
+        uint32_t gc_mask = XCB_GC_FOREGROUND | XCB_GC_GRAPHICS_EXPOSURES;
+        uint32_t gc_values[2] = { m_xcbRootScreen->black_pixel, 0 };
 
-        xcb_create_gc(m_xcbConnection, foreground, xcbParentWindow, mask2, values);
+        xcb_create_gc(m_xcbConnection, m_xcbGraphicContext, xcbParentWindow, gc_mask, gc_values);
 
         // Create an XCB window from the connection
         m_xcbWindow = xcb_generate_id(m_xcbConnection);
@@ -78,9 +79,9 @@ namespace AzFramework
         uint32_t eventMask = XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
 
         const uint32_t interestedEvents = XCB_EVENT_MASK_STRUCTURE_NOTIFY | XCB_EVENT_MASK_KEY_PRESS | XCB_EVENT_MASK_KEY_RELEASE |
-            XCB_EVENT_MASK_FOCUS_CHANGE | XCB_EVENT_MASK_PROPERTY_CHANGE | XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_BUTTON_PRESS;
+            XCB_EVENT_MASK_FOCUS_CHANGE | XCB_EVENT_MASK_PROPERTY_CHANGE | XCB_EVENT_MASK_EXPOSURE;
 
-        uint32_t valueList[] = { m_xcbRootScreen->white_pixel, interestedEvents };
+        uint32_t valueList[] = { m_xcbRootScreen->black_pixel, interestedEvents };
 
         xcb_void_cookie_t xcbCheckResult;
 
@@ -133,7 +134,6 @@ namespace AzFramework
         int32_t pid = getpid();
         xcb_change_property(m_xcbConnection, XCB_PROP_MODE_REPLACE, m_xcbWindow, _NET_WM_PID, XCB_ATOM_CARDINAL, 32, 1, &pid);
 
-        printf("BOOOOOOOOOOOOOOOOOOOOO\n");
         xcb_flush(m_xcbConnection);
     }
 
@@ -186,7 +186,6 @@ namespace AzFramework
         xcb_change_property(
             m_xcbConnection, XCB_PROP_MODE_REPLACE, m_xcbWindow, WM_PROTOCOLS, XCB_ATOM_ATOM, 32, atoms.size(), atoms.data());
 
-        printf("BOOOOOOOOOOOOOOOOOOOOO\n");
         xcb_flush(m_xcbConnection);
 
         // ---------------------------------------------------------------------
@@ -246,11 +245,29 @@ namespace AzFramework
 
     void XcbNativeWindow::DrawSplash()
     {
-        printf("Activate\n");
-        FILE* fp = fopen("/home/krymski/Downloads/poop.png", "rb");
+        auto settingsRegistry = AZ::SettingsRegistry::Get();
+        AZ::SettingsRegistryInterface::FixedValueString splashScreenImagePath;
+        AZ::SettingsRegistryInterface::FixedValueString assetCachePath;
+        static const AZStd::string SplashLogoSetregPath = "/O3DE/xcb/SplashScreenImagePath";
+        static const AZStd::string AssetsSetregPath = "/O3DE/Runtime/FilePaths/CacheProjectRootFolder";
+
+        if (!(settingsRegistry && settingsRegistry->Get(splashScreenImagePath, SplashLogoSetregPath.c_str())))
+        {
+            printf("SplashScreenImagePath not found\n");
+            return;
+        }
+        if (!(settingsRegistry && settingsRegistry->Get(assetCachePath, AssetsSetregPath.c_str())))
+        {
+            printf("Failed to grab cache folder\n");
+            return;
+        }
+        const AZStd::string splashScreenImagePath2 =
+            AZStd::string::format("%s/linux/%s", assetCachePath.c_str(), splashScreenImagePath.c_str());
+
+        FILE* fp = fopen(splashScreenImagePath2.c_str(), "rb");
         if (!fp)
         {
-            printf("Failed to open image\n");
+            printf("Failed to open image %s \n", splashScreenImagePath2.c_str());
             return;
         }
         // Initialize libpng
@@ -263,21 +280,15 @@ namespace AzFramework
         int width = png_get_image_width(png_ptr, info_ptr);
         int height = png_get_image_height(png_ptr, info_ptr);
 
-        printf("width: %d, height: %d\n", width, height);
         png_bytep row_pointers[height];
         for (int y = 0; y < height; y++)
         {
             row_pointers[y] = (png_byte*)malloc(png_get_rowbytes(png_ptr, info_ptr));
         }
         png_read_image(png_ptr, row_pointers);
-
+        fclose(fp);
         unsigned int stride = width * 4;
-        // print w. h . s
-        printf("width: %d, height: %d, stride: %d\n", width, height, stride);
-
-        // Create an XCB image from the in-memory data
-        // Create an XCB image from the in-memory data
-        uint8_t* data = (uint8_t*)malloc(height * stride); // assuming 4 bytes per pixel
+        uint8_t* data = (uint8_t*)malloc(height * stride);
         for (int y = 0; y < height; y++)
         {
             for (int x = 0; x < width; x++)
@@ -287,12 +298,10 @@ namespace AzFramework
                 data[pixelIndex + 0] = px[2]; // R
                 data[pixelIndex + 1] = px[1]; // G
                 data[pixelIndex + 2] = px[0]; // B
-                data[pixelIndex + 3] = 255; // B
             }
+            free(row_pointers[y]);
         }
 
-        printf("BOOOOOOOOOOOOOOOOOOOOO\n");
-        xcb_flush(m_xcbConnection);
         xcb_void_cookie_t cookie;
         xcb_pixmap_t pixmap = xcb_generate_id(m_xcbConnection);
         cookie = xcb_create_pixmap_checked(m_xcbConnection, m_xcbRootScreen->root_depth, pixmap, m_xcbWindow, width, height);
@@ -300,56 +309,46 @@ namespace AzFramework
         {
             printf("Error in xcb_create_pixmap: %d\n", error->error_code);
             free(error);
+            return;
         }
+        // This uses hardcoded 8bit depth , TODO check on HDR monitor
         xcb_image_t* image =
             xcb_image_create_native(m_xcbConnection, width, height, XCB_IMAGE_FORMAT_Z_PIXMAP, 24, data, width * height * 4, data);
-        xcb_image_put(m_xcbConnection, pixmap, foreground, image, 0, 0, 0);
-        xcb_image_destroy(image);
-        xcb_map_window(m_xcbConnection, m_xcbWindow);
-        printf("BOOOOOOOOOOOOOOOOOOOOO\n");
+        xcb_image_put(m_xcbConnection, pixmap, m_xcbGraphicContext, image, 0, 0, 0);
+        xcb_image_destroy(image); // not needed free(data);  Freed by destroy image
         xcb_flush(m_xcbConnection);
 
-        if (!m_activated)
+        xcb_generic_event_t* event;
+        while (true)
         {
-            xcb_generic_event_t* ev;
-            while (true)
+            event = xcb_wait_for_event(m_xcbConnection);
+            switch (event->response_type & ~0x80)
             {
-                printf("Waiting for event\n");
-                ev = xcb_wait_for_event(m_xcbConnection);
-                printf("Event received\n");
-                switch (ev->response_type & ~0x80)
+            case XCB_EXPOSE:
                 {
-                case XCB_EXPOSE:
-                {
-                    printf("Exporusre pressed\n");
-                    xcb_expose_event_t* x = (xcb_expose_event_t*)ev;
+                    xcb_expose_event_t* x = (xcb_expose_event_t*)event;
                     xcb_copy_area(
                         m_xcbConnection,
                         pixmap,
                         m_xcbWindow,
-                        foreground,
+                        m_xcbGraphicContext,
                         x->x,
                         x->y,
                         (m_width - width) / 2,
                         (m_height - height) / 2,
                         x->width,
                         x->height);
-                    printf("BOOOOOOOOOOOOOOOOOOOOO\n");
                     xcb_flush(m_xcbConnection);
                     goto end;
                 }
-                    break;
-                default:
-                    break;
-                }
-                free(ev);
+                break;
+            default:
+                break;
             }
-
+            free(event);
         }
-        end:
-        xcb_copy_area(m_xcbConnection, pixmap, m_xcbWindow, foreground, 0, 0, 0, 0, m_width, m_height);
-        printf("BOOOOOOOOOOOOOOOOOOOOO\n");
-        xcb_flush(m_xcbConnection);
+
+    end:
 
         xcb_free_pixmap(m_xcbConnection, pixmap);
     }
@@ -361,6 +360,8 @@ namespace AzFramework
 
         if (!m_activated) // nothing to do if window was already activated
         {
+            xcb_map_window(m_xcbConnection, m_xcbWindow);
+            xcb_flush(m_xcbConnection);
             DrawSplash();
             m_activated = true;
         }
@@ -376,7 +377,6 @@ namespace AzFramework
             WindowNotificationBus::Event(reinterpret_cast<NativeWindowHandle>(m_xcbWindow), &WindowNotificationBus::Events::OnWindowClosed);
 
             xcb_unmap_window(m_xcbConnection, m_xcbWindow);
-            printf("BOOOOOOOOOOOOOOOOOOOOO\n");
             xcb_flush(m_xcbConnection);
         }
         XcbEventHandlerBus::Handler::BusDisconnect();
@@ -425,7 +425,6 @@ namespace AzFramework
         if (m_activated)
         {
             xcb_map_window(m_xcbConnection, m_xcbWindow);
-            printf("BOOOOOOOOOOOOOOOOOOOOO\n");
             xcb_flush(m_xcbConnection);
         }
         // Notify the RHI to rebuild swapchain and swapchain images after updating the surface
@@ -509,7 +508,6 @@ namespace AzFramework
             }
         }
 
-        printf("BOOOOOOOOOOOOOOOOOOOOO\n");
         xcb_flush(m_xcbConnection);
         m_fullscreenState = fullScreenState;
     }
@@ -565,7 +563,6 @@ namespace AzFramework
                             m_xcbRootScreen->root,
                             XCB_EVENT_MASK_STRUCTURE_NOTIFY | XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT,
                             reinterpret_cast<const char*>(&reply));
-                        printf("BOOOOOOOOOOOOOOOOOOOOO\n");
                         xcb_flush(m_xcbConnection);
                     }
                 }

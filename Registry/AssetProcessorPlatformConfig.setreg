@@ -315,6 +315,11 @@
                     "params": "skip",
                     "tools": "copy"
                 },
+                "RC png-splashScreenLogo": {
+                    "pattern": ".*logo.png",
+                    "productAssetType": "{3436C30E-E2C5-4C3B-A7B9-66C94A28701B}",
+                    "params": "copy"
+                },
                 "RC usm": {
                     "glob": "*.usm",
                     "params": "copy",

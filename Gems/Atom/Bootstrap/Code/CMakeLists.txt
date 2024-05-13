@@ -18,8 +18,6 @@ ly_add_target(
             Include
 )
 
-
-
 ly_add_target(
     NAME Atom_Bootstrap ${PAL_TRAIT_MONOLITHIC_DRIVEN_MODULE_TYPE}
     NAMESPACE Gem
@@ -42,7 +40,6 @@ ly_add_target(
             Gem::Atom_RPI.Public
             3rdParty::PNG
             3rdParty::X11::xcb_image
-
 )
 
 # Atom_Bootstrap is only used in Launchers
